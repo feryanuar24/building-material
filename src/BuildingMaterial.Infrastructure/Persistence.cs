@@ -10,6 +10,28 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
     public DbSet<Customer> Customers => Set<Customer>();
     public DbSet<Admin> Admins => Set<Admin>();
     public DbSet<EmailToken> EmailTokens => Set<EmailToken>();
+    public DbSet<Category> Categories => Set<Category>();
+    public DbSet<Product> Products => Set<Product>();
+    public DbSet<ProductVariant> ProductVariants => Set<ProductVariant>();
+    public DbSet<CatalogOutboxMessage> CatalogOutboxMessages => Set<CatalogOutboxMessage>();
+
+    public override int SaveChanges(bool acceptAllChangesOnSuccess) { EnqueueCatalogChanges(); return base.SaveChanges(acceptAllChangesOnSuccess); }
+    public override Task<int> SaveChangesAsync(bool acceptAllChangesOnSuccess, CancellationToken cancellationToken = default) { EnqueueCatalogChanges(); return base.SaveChangesAsync(acceptAllChangesOnSuccess, cancellationToken); }
+
+    private void EnqueueCatalogChanges()
+    {
+        var tracked = ChangeTracker.Entries().Where(x => x.State is EntityState.Added or EntityState.Modified or EntityState.Deleted)
+            .Where(x => x.Entity is Category or Product or ProductVariant).ToArray();
+        foreach (var entry in tracked)
+        {
+            var (type, id) = entry.Entity switch
+            {
+                Category x => ("category", x.Id), Product x => ("product", x.Id), ProductVariant x => ("variant", x.Id),
+                _ => throw new InvalidOperationException("Unsupported catalog entity.")
+            };
+            CatalogOutboxMessages.Add(new CatalogOutboxMessage { EntityType = type, EntityId = id, Operation = entry.State == EntityState.Deleted ? "delete" : "upsert" });
+        }
+    }
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -53,6 +75,41 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
             b.Property(x => x.Used).HasColumnName("used");
             b.HasIndex(x => new { x.UserId, x.Purpose, x.TokenHash });
             b.HasOne(x => x.User).WithMany().HasForeignKey(x => x.UserId);
+        });
+        modelBuilder.Entity<Category>(b =>
+        {
+            b.ToTable("categories"); b.HasKey(x => x.Id);
+            b.Property(x => x.Id).HasColumnName("id"); b.Property(x => x.Name).HasColumnName("name").HasMaxLength(200).IsRequired();
+            b.Property(x => x.Slug).HasColumnName("slug").HasMaxLength(220).IsRequired(); b.Property(x => x.ParentId).HasColumnName("parent_id");
+            b.HasIndex(x => x.Slug).IsUnique(); b.HasOne(x => x.Parent).WithMany(x => x.Children).HasForeignKey(x => x.ParentId).OnDelete(DeleteBehavior.Restrict);
+        });
+        modelBuilder.Entity<Product>(b =>
+        {
+            b.ToTable("products"); b.HasKey(x => x.Id);
+            b.Property(x => x.Id).HasColumnName("id"); b.Property(x => x.CategoryId).HasColumnName("category_id");
+            b.Property(x => x.Name).HasColumnName("name").HasMaxLength(300).IsRequired(); b.Property(x => x.Slug).HasColumnName("slug").HasMaxLength(320).IsRequired();
+            b.Property(x => x.Description).HasColumnName("description").IsRequired(); b.Property(x => x.IsActive).HasColumnName("is_active");
+            b.Property(x => x.UpdatedAt).HasColumnName("updated_at"); b.HasIndex(x => x.Slug).IsUnique();
+            b.HasOne(x => x.Category).WithMany(x => x.Products).HasForeignKey(x => x.CategoryId).OnDelete(DeleteBehavior.Restrict);
+        });
+        modelBuilder.Entity<ProductVariant>(b =>
+        {
+            b.ToTable("product_variants"); b.HasKey(x => x.Id);
+            b.Property(x => x.Id).HasColumnName("id"); b.Property(x => x.ProductId).HasColumnName("product_id");
+            b.Property(x => x.Sku).HasColumnName("sku").HasMaxLength(100).IsRequired(); b.Property(x => x.Price).HasColumnName("price").HasPrecision(18, 2);
+            foreach (var name in new[] { "LengthMm", "WidthMm", "HeightMm", "DiameterMm", "ThicknessMm", "WeightKg" })
+                b.Property<decimal?>(name).HasColumnName(char.ToLowerInvariant(name[0]) + name[1..]);
+            b.Property(x => x.Unit).HasColumnName("unit").HasMaxLength(30).IsRequired(); b.Property(x => x.IsActive).HasColumnName("is_active");
+            b.HasIndex(x => x.Sku).IsUnique(); b.HasOne(x => x.Product).WithMany(x => x.Variants).HasForeignKey(x => x.ProductId).OnDelete(DeleteBehavior.Cascade);
+        });
+        modelBuilder.Entity<CatalogOutboxMessage>(b =>
+        {
+            b.ToTable("catalog_outbox"); b.HasKey(x => x.Id);
+            b.Property(x => x.Id).HasColumnName("id"); b.Property(x => x.EntityType).HasColumnName("entity_type").HasMaxLength(50).IsRequired();
+            b.Property(x => x.EntityId).HasColumnName("entity_id"); b.Property(x => x.Operation).HasColumnName("operation").HasMaxLength(20).IsRequired();
+            b.Property(x => x.CreatedAt).HasColumnName("created_at"); b.Property(x => x.ProcessedAt).HasColumnName("processed_at");
+            b.Property(x => x.Attempts).HasColumnName("attempts"); b.Property(x => x.LastError).HasColumnName("last_error");
+            b.HasIndex(x => new { x.ProcessedAt, x.CreatedAt });
         });
     }
 }

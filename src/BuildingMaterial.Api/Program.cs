@@ -1,10 +1,10 @@
 using System.Text;
 using BuildingMaterial.Api;
-using BuildingMaterial.Infrastructure;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
+using BuildingMaterial.Infrastructure;
 
 var builder = WebApplication.CreateBuilder(args);
 var configuration = builder.Configuration;
@@ -18,6 +18,15 @@ builder.Services.AddScoped<ITokenService, JwtTokenService>();
 builder.Services.AddScoped<IEmailSender, SmtpEmailSender>();
 builder.Services.AddScoped<DatabaseSeeder>();
 builder.Services.AddHttpClient();
+builder.Services.AddHttpClient("elasticsearch", client =>
+{
+    client.BaseAddress = new Uri(configuration["Elasticsearch:Url"] ?? "http://elasticsearch:9200/");
+    client.Timeout = TimeSpan.FromSeconds(configuration.GetValue("Elasticsearch:TimeoutSeconds", 3));
+});
+builder.Services.AddStackExchangeRedisCache(options => options.Configuration = configuration.GetConnectionString("Redis") ?? "redis:6379");
+builder.Services.AddScoped<CategoryCache>();
+builder.Services.AddSingleton<ElasticsearchCatalog>();
+builder.Services.AddHostedService<CatalogSyncWorker>();
 builder.Services.AddHttpClient<SlackErrorNotifier>();
 builder.Services.AddSingleton<RecaptchaValidator>();
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme).AddJwtBearer(options =>

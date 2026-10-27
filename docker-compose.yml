@@ -6,6 +6,9 @@ services:
     environment:
       ASPNETCORE_ENVIRONMENT: Development
       ConnectionStrings__Postgres: Host=postgres;Port=5432;Database=building_material;Username=app;Password=app
+      ConnectionStrings__Redis: redis:6379
+      Elasticsearch__Url: http://elasticsearch:9200/
+      Elasticsearch__Index: catalog
       Jwt__Key: ${JWT_KEY:-change-this-development-key-to-a-long-production-secret}
       Recaptcha__SecretKey: ${RECAPTCHA_SECRET_KEY:-}
       Slack__ErrorWebhookUrl: ${SLACK_ERROR_WEBHOOK_URL:-}
