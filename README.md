@@ -15,6 +15,13 @@ docker compose up --build
 
 Swagger tersedia di `http://localhost:8080/swagger` saat environment Development. Mailpit tersedia di `http://localhost:8025`.
 
+Saat aplikasi mulai, EF Core menjalankan migration dan seeder secara idempoten. Seeder
+membuat satu admin dan tiga customer.
+Error server dicatat melalui logging ASP.NET Core. Jika `SLACK_ERROR_WEBHOOK_URL`
+diatur, error yang tidak tertangani juga dikirim ke Slack.
+Untuk database PostgreSQL lama yang dibuat oleh init SQL, hapus volume
+`postgres-data` sekali sebelum menjalankan versi migration ini.
+
 Endpoint autentikasi:
 
 - `POST /api/auth/register`

@@ -1,4 +1,5 @@
 using System.Text;
+using BuildingMaterial.Api;
 using BuildingMaterial.Infrastructure;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.RateLimiting;
@@ -9,10 +10,15 @@ var builder = WebApplication.CreateBuilder(args);
 var configuration = builder.Configuration;
 
 builder.Services.AddDbContext<AppDbContext>(options =>
-    options.UseNpgsql(configuration.GetConnectionString("Postgres")));
+    options.UseNpgsql(configuration.GetConnectionString("Postgres"),
+        npgsql => npgsql.MigrationsAssembly(typeof(AppDbContext).Assembly.FullName)));
+builder.Services.AddExceptionHandler<ApiExceptionHandler>();
+builder.Services.AddProblemDetails();
 builder.Services.AddScoped<ITokenService, JwtTokenService>();
 builder.Services.AddScoped<IEmailSender, SmtpEmailSender>();
+builder.Services.AddScoped<DatabaseSeeder>();
 builder.Services.AddHttpClient();
+builder.Services.AddHttpClient<SlackErrorNotifier>();
 builder.Services.AddSingleton<RecaptchaValidator>();
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme).AddJwtBearer(options =>
 {
@@ -49,6 +55,14 @@ builder.Services.AddSwaggerGen();
 builder.Services.AddHealthChecks().AddNpgSql(configuration.GetConnectionString("Postgres")!);
 
 var app = builder.Build();
+await using (var scope = app.Services.CreateAsyncScope())
+{
+    var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+    await db.Database.MigrateAsync();
+    await scope.ServiceProvider.GetRequiredService<DatabaseSeeder>().SeedAsync();
+}
+
+app.UseExceptionHandler();
 if (app.Environment.IsDevelopment()) { app.UseSwagger(); app.UseSwaggerUI(); }
 app.UseHttpsRedirection();
 app.UseRateLimiter();
