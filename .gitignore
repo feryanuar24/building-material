@@ -1,0 +1,45 @@
+# Build output
+[Bb]in/
+[Oo]bj/
+artifacts/
+
+# Visual Studio and .NET tooling
+.vs/
+.vscode/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+*.nupkg
+*.snupkg
+project.lock.json
+project.fragment.lock.json
+
+# Rider and ReSharper
+.idea/
+*.sln.iml
+_ReSharper*/
+*.[Rr]e[Ss]harper
+
+# Test and coverage output
+TestResults/
+coverage/
+*.coverage
+*.coveragexml
+
+# Local configuration and secrets
+appsettings.Development.json
+appsettings.Local.json
+*.secrets.json
+.env
+.env.*
+!.env.example
+
+# Logs and local data
+logs/
+*.log
+docker-data/
+
+# OS-generated files
+.DS_Store
+Thumbs.db

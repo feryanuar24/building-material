@@ -1,0 +1,59 @@
+services:
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    environment:
+      ASPNETCORE_ENVIRONMENT: Development
+      ConnectionStrings__Postgres: Host=postgres;Port=5432;Database=building_material;Username=app;Password=app
+      Jwt__Key: ${JWT_KEY:-change-this-development-key-to-a-long-production-secret}
+      Recaptcha__SecretKey: ${RECAPTCHA_SECRET_KEY:-}
+    ports:
+      - "8080:8080"
+    depends_on:
+      postgres: { condition: service_healthy }
+      rabbitmq: { condition: service_healthy }
+      redis: { condition: service_healthy }
+      elasticsearch: { condition: service_healthy }
+      mailer: { condition: service_started }
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: building_material
+      POSTGRES_USER: app
+      POSTGRES_PASSWORD: app
+    ports: ["5433:5432"]
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./docker/postgres/init.sql:/docker-entrypoint-initdb.d/001-init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U app -d building_material"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+  rabbitmq:
+    image: rabbitmq:3.13-management-alpine
+    ports: ["5673:5672", "15673:15672"]
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.15.3
+    environment:
+      discovery.type: single-node
+      xpack.security.enabled: "false"
+      ES_JAVA_OPTS: "-Xms512m -Xmx512m"
+    ports: ["9200:9200"]
+    volumes: [elasticsearch-data:/usr/share/elasticsearch/data]
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fs http://localhost:9200 >/dev/null || exit 1"]
+  mailer:
+    image: axllent/mailpit:v1.20
+    ports: ["1025:1025", "8025:8025"]
+  redis:
+    image: redis:7-alpine
+    ports: ["6380:6379"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+volumes:
+  postgres-data:
+  elasticsearch-data:
