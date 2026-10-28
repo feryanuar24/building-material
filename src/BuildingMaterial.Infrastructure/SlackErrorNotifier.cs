@@ -11,7 +11,7 @@ public sealed class SlackErrorNotifier(
 {
     public async Task NotifyAsync(Exception exception, string path, CancellationToken cancellationToken)
     {
-        var webhookUrl = configuration["Slack:ErrorWebhookUrl"];
+        var webhookUrl = configuration["Slack:WebhookUrl"];
         if (string.IsNullOrWhiteSpace(webhookUrl))
             return;
 

@@ -10,7 +10,7 @@ partial class AppDbContextModelSnapshot : ModelSnapshot
 {
     protected override void BuildModel(ModelBuilder modelBuilder)
     {
-        modelBuilder.HasAnnotation("ProductVersion", "8.0.10");
+        modelBuilder.HasAnnotation("ProductVersion", "10.0.0");
 
         modelBuilder.Entity("BuildingMaterial.Domain.Admin", b =>
         {

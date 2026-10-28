@@ -1,75 +1,49 @@
 # Building Material API
 
-Kerangka Clean Architecture .NET 8:
+Clean Architecture framework .NET 10:
 
-- `Domain`: entitas dan peran.
-- `Application`: kontrak permintaan dan respons.
-- `Infrastructure`: EF Core PostgreSQL, hashing, JWT, SMTP, Elasticsearch, dan Redis.
-- `Api`: endpoint HTTP, autentikasi cookie/JWT, RBAC, pembatasan laju, dan reCAPTCHA.
+- `Domain`: entities and roles.
+- `Application`: request and response contracts.
+- `Infrastructure`: EF Core PostgreSQL, hashing, JWT, SMTP, Elasticsearch, and Redis.
+- `Api`: HTTP endpoints, cookie/JWT authentication, RBAC, rate limiting, and reCAPTCHA.
 
-## Menjalankan
+## Running
 
 ```bash
 docker compose up --build
 ```
 
-Swagger tersedia di `http://localhost:8080/swagger` pada lingkungan Development.
-Mailpit tersedia di `http://localhost:8025`.
+Swagger is available at `http://localhost:8080/swagger` in the Development environment. Mailpit is available at `http://localhost:8025`.
 
-Saat aplikasi mulai, EF Core menjalankan migrasi dan pengisi data secara
-idempoten. Pengisi data membuat satu admin dan tiga customer. Error server
-dicatat melalui logging ASP.NET Core. Jika `SLACK_ERROR_WEBHOOK_URL` diatur,
-error yang tidak tertangani juga dikirim ke Slack.
+When the application starts, EF Core runs migrations and seeds data idempotently. The seed creates one admin and three customers. Server errors are logged via ASP.NET Core logging.
 
-Untuk database PostgreSQL lama yang dibuat oleh SQL inisialisasi, hapus volume
-`postgres-data` sekali sebelum menjalankan versi migrasi ini.
+## Catalog Search
 
-## Pencarian katalog
+The relational catalog uses three main entities:
 
-Katalog relasional menggunakan tiga entitas utama:
+- `categories`: hierarchical taxonomy (`parent_id`) with a unique slug.
+- `products`: collection of materials that can be sold and belong to a single category.
+- `product_variants`: SKUs that can be purchased with price, unit, and optional metric dimensions.
 
-- `categories`: taksonomi hierarkis (`parent_id`) dengan slug unik.
-- `products`: kelompok material yang dapat dijual dan dimiliki oleh satu kategori.
-- `product_variants`: SKU yang dapat dibeli dengan harga, satuan, dan dimensi
-  metrik opsional (`length_mm`, `width_mm`, `height_mm`, `diameter_mm`,
-  `thickness_mm`, dan `weight_kg`). Dengan struktur ini, dimensi pipa dan besi
-  dapat dicari tanpa harus menyisipkannya ke dalam nama produk.
+Catalog writes insert a transactional row into `catalog_outbox` in PostgreSQL. `CatalogSyncWorker` processes the outbox and upserts one Elasticsearch document for each active variant. Thus PostgreSQL remains the primary data source and the synchronization process can be safely replayed. The public homepage API reads catalog results directly from Elasticsearch:
 
-Penulisan katalog memasukkan satu baris transaksional ke `catalog_outbox` di
-PostgreSQL. `CatalogSyncWorker` memproses outbox tersebut dan melakukan upsert
-satu dokumen Elasticsearch untuk setiap varian aktif. Dengan demikian,
-PostgreSQL tetap menjadi sumber data utama dan proses sinkronisasi dapat
-diulang dengan aman. API homepage publik membaca hasil katalog langsung dari
-Elasticsearch:
+- `GET /api/catalog` supports parameters `q`, `category`, `minPrice`, `maxPrice`, `diameterMm`, `thicknessMm`, `page`, and `pageSize`.
+- `GET /api/catalog/categories` reads the category hierarchy from Redis with a ten‑minute cache.
 
-- `GET /api/catalog` mendukung parameter `q`, `category`, `minPrice`,
-  `maxPrice`, `diameterMm`, `thicknessMm`, `page`, dan `pageSize`.
-- `GET /api/catalog/categories` membaca struktur kategori dari Redis dengan
-  cache selama sepuluh menit.
+Elasticsearch and Redis URLs can be configured via `Elasticsearch:Url`, `Elasticsearch:Index`, and `ConnectionStrings:Redis`.
 
-URL Elasticsearch dan Redis dapat dikonfigurasi melalui `Elasticsearch:Url`,
-`Elasticsearch:Index`, dan `ConnectionStrings:Redis`.
-
-## Endpoint autentikasi
+## Authentication Endpoints
 
 - `POST /api/auth/register`
 - `POST /api/auth/login`
-- `POST /api/auth/verify-email` (`email`, `token`)
-- `POST /api/auth/forgot-email` (`email`; tidak memerlukan `token`)
-- `POST /api/auth/reset-email` (`email`, `token`, `newPassword`)
+- `POST /api/auth/verify-email`
+- `POST /api/auth/forgot-email`
+- `POST /api/auth/reset-email`
 
-Login mengembalikan JWT dan juga memasang cookie `access_token` dengan atribut
-`Secure`, `HttpOnly`, dan `SameSite=Strict`. Header `Authorization: Bearer
-<token>` juga didukung.
+Login returns a JWT and also sets an `access_token` cookie with `Secure`, `HttpOnly`, and `SameSite=Strict` attributes. The `Authorization: Bearer <token>` header is also supported.
 
-`users` hanya menyimpan kredensial dan metadata autentikasi. Data bisnis berada
-di `customers` dan `admins`, dengan peran JWT `Customer`/`Admin`. Buat admin
-melalui migrasi atau pengisi data internal, bukan dari endpoint pendaftaran publik.
+`users` only store authentication credentials and metadata. Business data resides in `customers` and `admins`, with JWT roles `Customer`/`Admin`. Create admins via migrations or internal seed data, not through a public registration endpoint.
 
-## Produksi
+## Production
 
-Ganti `Jwt__Key`, password PostgreSQL, dan `Recaptcha__SecretKey` melalui
-secret manager atau environment variable. Ketika
-`ASPNETCORE_ENVIRONMENT=Production`, semua endpoint autentikasi memerlukan
-token reCAPTCHA yang diverifikasi ke Google. Batas laju autentikasi default
-adalah 10 permintaan per menit per IP; sesuaikan melalui `RateLimiting`.
+Replace secret via environment variables. When `ASPNETCORE_ENVIRONMENT=Production`, all authentication endpoints require a reCAPTCHA token verified with Google. The default authentication rate limit is 10 requests per minute per IP; adjust via `RateLimiting`.
