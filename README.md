@@ -15,7 +15,7 @@ docker compose up --build
 
 Swagger is available at `http://localhost:8080/swagger` in the Development environment. Mailpit is available at `http://localhost:8025`.
 
-When the application starts, EF Core runs migrations and seeds data idempotently. The seed creates one admin and three customers. Server errors are logged via ASP.NET Core logging.
+When the application starts, EF Core runs migrations and seeds data idempotently. The seed creates one admin and three customers. Logs are written to `logs/app.log` and remain available in the container filesystem.
 
 ## Catalog Search
 
@@ -47,3 +47,11 @@ Login returns a JWT and also sets an `access_token` cookie with `Secure`, `HttpO
 ## Production
 
 Replace secret via environment variables. When `ASPNETCORE_ENVIRONMENT=Production`, all authentication endpoints require a reCAPTCHA token verified with Google. The default authentication rate limit is 10 requests per minute per IP; adjust via `RateLimiting`.
+
+## Testing
+
+Run the authentication tests with:
+
+```bash
+dotnet test tests/BuildingMaterial.Api.Tests/BuildingMaterial.Api.Tests.csproj
+```

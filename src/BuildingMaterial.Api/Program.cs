@@ -6,35 +6,65 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 using BuildingMaterial.Infrastructure;
 
+// Inisialisasi Aplikasi
 var builder = WebApplication.CreateBuilder(args);
 var configuration = builder.Configuration;
 
+// Registrasi Logger ke File
+builder.Logging.AddProvider(new FileLoggerProvider(
+    Path.Combine(builder.Environment.ContentRootPath, "logs", "app.log")));
+
+// Registrasi EFC menggunakan PostgreSQL serta mengatur migrasi
 builder.Services.AddDbContext<AppDbContext>(options =>
     options.UseNpgsql(configuration.GetConnectionString("Postgres"),
         npgsql => npgsql.MigrationsAssembly(typeof(AppDbContext).Assembly.FullName)));
+
+// Registrasi Error Handling
 builder.Services.AddExceptionHandler<ApiExceptionHandler>();
 builder.Services.AddProblemDetails();
+
+// Registrasi Service Custom (JWT Token Service, Email Sender, Database Seeder)
 builder.Services.AddScoped<ITokenService, JwtTokenService>();
 builder.Services.AddScoped<IEmailSender, SmtpEmailSender>();
 builder.Services.AddScoped<DatabaseSeeder>();
+
+// Registrasi HTTP Client
 builder.Services.AddHttpClient();
+
+// Registrasi HTTP Client untuk Elasticsearch
 builder.Services.AddHttpClient("elasticsearch", client =>
 {
     client.BaseAddress = new Uri(configuration["Elasticsearch:Url"] ?? "http://elasticsearch:9200/");
     client.Timeout = TimeSpan.FromSeconds(configuration.GetValue("Elasticsearch:TimeoutSeconds", 3));
 });
+
+// Registrasi Redis
 builder.Services.AddStackExchangeRedisCache(options => options.Configuration = configuration.GetConnectionString("Redis") ?? "redis:6379");
+
+// Registrasi Service Custom (CategoryCache & ElasticsearchCatalog)
 builder.Services.AddScoped<CategoryCache>();
 builder.Services.AddSingleton<ElasticsearchCatalog>();
+
+// Registrasi Background Service untuk Sinkronisasi Catalog ke Elasticsearch
 builder.Services.AddHostedService<CatalogSyncWorker>();
+
+// Registrasi HTTP Client untuk Slack Error Notifier
 builder.Services.AddHttpClient<SlackErrorNotifier>();
+
+// Registrasi reCAPTCHA Validator
 builder.Services.AddSingleton<RecaptchaValidator>();
+
+// Registrasi Authentication dengan JWT Bearer dan Authorization
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme).AddJwtBearer(options =>
 {
     options.TokenValidationParameters = new TokenValidationParameters
     {
-        ValidateIssuer = true, ValidateAudience = true, ValidateLifetime = true, ValidateIssuerSigningKey = true,
-        ValidIssuer = configuration["Jwt:Issuer"], ValidAudience = configuration["Jwt:Audience"],
+        ValidateIssuer = true,
+        ValidateAudience = true,
+        ValidateLifetime = true,
+        ValidateIssuerSigningKey = true,
+        ValidIssuer = configuration["Jwt:Issuer"],
+        ValidAudience = configuration["Jwt:Audience"],
         IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(configuration["Jwt:Key"] ?? throw new InvalidOperationException("Jwt:Key is not configured.")))
     };
     options.Events = new JwtBearerEvents
@@ -48,6 +78,8 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme).AddJw
     };
 });
 builder.Services.AddAuthorization();
+
+// Registrasi Rate Limiter
 builder.Services.AddRateLimiter(options =>
 {
     options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
@@ -58,12 +90,17 @@ builder.Services.AddRateLimiter(options =>
         limiter.QueueLimit = 0;
     });
 });
+
+// Registrasi Endpoint, Swagger, & Health Checks
 builder.Services.AddControllers();
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 builder.Services.AddHealthChecks().AddNpgSql(configuration.GetConnectionString("Postgres")!);
 
+// Build Aplikasi
 var app = builder.Build();
+
+// Menerapkan Migrasi Database dan Seed Data
 await using (var scope = app.Services.CreateAsyncScope())
 {
     var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
@@ -71,6 +108,7 @@ await using (var scope = app.Services.CreateAsyncScope())
     await scope.ServiceProvider.GetRequiredService<DatabaseSeeder>().SeedAsync();
 }
 
+// Jalankan Middleware dan Endpoint
 app.UseExceptionHandler();
 if (app.Environment.IsDevelopment()) { app.UseSwagger(); app.UseSwaggerUI(); }
 app.UseHttpsRedirection();
@@ -80,23 +118,3 @@ app.UseAuthorization();
 app.MapHealthChecks("/health");
 app.MapControllers();
 app.Run();
-
-public sealed class RecaptchaValidator(IConfiguration configuration, IHttpClientFactory httpClientFactory)
-{
-    public async Task EnsureValidAsync(string? token, CancellationToken cancellationToken)
-    {
-        if (!string.Equals(configuration["ASPNETCORE_ENVIRONMENT"], "Production", StringComparison.OrdinalIgnoreCase) &&
-            !string.Equals(Environment.GetEnvironmentVariable("ASPNETCORE_ENVIRONMENT"), "Production", StringComparison.OrdinalIgnoreCase))
-            return;
-        if (string.IsNullOrWhiteSpace(token)) throw new InvalidOperationException("reCAPTCHA token is required.");
-        var secret = configuration["Recaptcha:SecretKey"] ?? throw new InvalidOperationException("Recaptcha:SecretKey is not configured.");
-        using var response = await httpClientFactory.CreateClient().PostAsync(
-            $"https://www.google.com/recaptcha/api/siteverify?secret={Uri.EscapeDataString(secret)}&response={Uri.EscapeDataString(token)}",
-            null, cancellationToken);
-        response.EnsureSuccessStatusCode();
-        var result = await response.Content.ReadFromJsonAsync<RecaptchaResponse>(cancellationToken);
-        if (result is not { Success: true }) throw new InvalidOperationException("reCAPTCHA validation failed.");
-    }
-
-    private sealed record RecaptchaResponse(bool Success);
-}

@@ -26,7 +26,9 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
         {
             var (type, id) = entry.Entity switch
             {
-                Category x => ("category", x.Id), Product x => ("product", x.Id), ProductVariant x => ("variant", x.Id),
+                Category x => ("category", x.Id),
+                Product x => ("product", x.Id),
+                ProductVariant x => ("variant", x.Id),
                 _ => throw new InvalidOperationException("Unsupported catalog entity.")
             };
             CatalogOutboxMessages.Add(new CatalogOutboxMessage { EntityType = type, EntityId = id, Operation = entry.State == EntityState.Deleted ? "delete" : "upsert" });
