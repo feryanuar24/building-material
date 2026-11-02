@@ -10,10 +10,12 @@ using Microsoft.EntityFrameworkCore;
 
 namespace BuildingMaterial.Api;
 
-[ApiController, Route("api/auth"), EnableRateLimiting("auth")]
+[ApiController, Route("api/auth"), EnableRateLimiting("auth"), Produces("application/json")]
 public sealed class AuthController(AppDbContext db, ITokenService tokens, IEmailSender email, RecaptchaValidator recaptcha) : ControllerBase
 {
     [HttpPost("register")]
+    [ProducesResponseType(StatusCodes.Status201Created)]
+    [ProducesResponseType(StatusCodes.Status409Conflict)]
     public async Task<IActionResult> Register(RegisterRequest request, CancellationToken ct)
     {
         await recaptcha.EnsureValidAsync(request.RecaptchaToken, ct);
@@ -29,6 +31,9 @@ public sealed class AuthController(AppDbContext db, ITokenService tokens, IEmail
     }
 
     [HttpPost("login")]
+    [ProducesResponseType(typeof(AuthResponse), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
     public async Task<IActionResult> Login(LoginRequest request, CancellationToken ct)
     {
         await recaptcha.EnsureValidAsync(request.RecaptchaToken, ct);

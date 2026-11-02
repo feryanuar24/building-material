@@ -3,7 +3,9 @@ using BuildingMaterial.Api;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Diagnostics.HealthChecks;
 using Microsoft.IdentityModel.Tokens;
+using Microsoft.OpenApi.Models;
 using BuildingMaterial.Infrastructure;
 
 // Inisialisasi Aplikasi
@@ -91,10 +93,66 @@ builder.Services.AddRateLimiter(options =>
     });
 });
 
+// Registrasi CORS untuk integrasi Frontend & Postman
+builder.Services.AddCors(options =>
+{
+    options.AddPolicy("DefaultCorsPolicy", policy =>
+    {
+        var allowedOrigins = configuration.GetSection("Cors:AllowedOrigins").Get<string[]>() ?? [];
+        if (allowedOrigins.Length > 0)
+        {
+            policy.WithOrigins(allowedOrigins)
+                .AllowAnyHeader()
+                .AllowAnyMethod()
+                .AllowCredentials();
+        }
+        else
+        {
+            policy.SetIsOriginAllowed(_ => true)
+                .AllowAnyHeader()
+                .AllowAnyMethod()
+                .AllowCredentials();
+        }
+    });
+});
+
 // Registrasi Endpoint, Swagger, & Health Checks
 builder.Services.AddControllers();
 builder.Services.AddEndpointsApiExplorer();
-builder.Services.AddSwaggerGen();
+builder.Services.AddSwaggerGen(options =>
+{
+    options.SwaggerDoc("v1", new OpenApiInfo
+    {
+        Title = "Building Material API",
+        Version = "v1",
+        Description = "API Katalog Bahan Bangunan, Autentikasi, dan Admin Management"
+    });
+
+    options.AddSecurityDefinition("Bearer", new OpenApiSecurityScheme
+    {
+        Name = "Authorization",
+        Description = "Masukkan JWT token Anda. Contoh format: eyJhbGciOi...",
+        In = ParameterLocation.Header,
+        Type = SecuritySchemeType.Http,
+        Scheme = "Bearer",
+        BearerFormat = "JWT"
+    });
+
+    options.AddSecurityRequirement(new OpenApiSecurityRequirement
+    {
+        {
+            new OpenApiSecurityScheme
+            {
+                Reference = new OpenApiReference
+                {
+                    Type = ReferenceType.SecurityScheme,
+                    Id = "Bearer"
+                }
+            },
+            Array.Empty<string>()
+        }
+    });
+});
 builder.Services.AddHealthChecks().AddNpgSql(configuration.GetConnectionString("Postgres")!);
 
 // Build Aplikasi
@@ -110,11 +168,29 @@ await using (var scope = app.Services.CreateAsyncScope())
 
 // Jalankan Middleware dan Endpoint
 app.UseExceptionHandler();
-if (app.Environment.IsDevelopment()) { app.UseSwagger(); app.UseSwaggerUI(); }
+if (app.Environment.IsDevelopment())
+{
+    app.UseSwagger();
+    app.UseSwaggerUI(options =>
+    {
+        options.SwaggerEndpoint("/swagger/v1/swagger.json", "Building Material API v1");
+        options.DisplayRequestDuration();
+    });
+}
 app.UseHttpsRedirection();
+app.UseCors("DefaultCorsPolicy");
 app.UseRateLimiter();
 app.UseAuthentication();
 app.UseAuthorization();
-app.MapHealthChecks("/health");
+app.MapGet("/health", async (HealthCheckService healthService) =>
+{
+    var report = await healthService.CheckHealthAsync();
+    return report.Status == HealthStatus.Healthy
+        ? Results.Text("Healthy")
+        : Results.Text(report.Status.ToString(), statusCode: StatusCodes.Status503ServiceUnavailable);
+})
+.WithTags("Health")
+.Produces(StatusCodes.Status200OK, contentType: "text/plain")
+.Produces(StatusCodes.Status503ServiceUnavailable, contentType: "text/plain");
 app.MapControllers();
 app.Run();

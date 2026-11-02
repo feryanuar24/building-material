@@ -6,12 +6,15 @@ namespace BuildingMaterial.Api;
 
 [ApiController]
 [Route("api/catalog")]
+[Produces("application/json")]
 public sealed class CatalogController(CategoryCache categories, IHttpClientFactory clients, IConfiguration configuration) : ControllerBase
 {
     [HttpGet("categories")]
+    [ProducesResponseType(typeof(IReadOnlyList<CategoryDto>), StatusCodes.Status200OK)]
     public async Task<IReadOnlyList<CategoryDto>> Categories(CancellationToken ct) => await categories.GetAsync(ct);
 
     [HttpGet]
+    [ProducesResponseType(StatusCodes.Status200OK)]
     public async Task<IActionResult> Search([FromQuery] string? q, [FromQuery] string? category, [FromQuery] decimal? minPrice,
         [FromQuery] decimal? maxPrice, [FromQuery] decimal? diameterMm, [FromQuery] decimal? thicknessMm,
         [FromQuery] int page = 1, [FromQuery] int pageSize = 24, CancellationToken ct = default)
