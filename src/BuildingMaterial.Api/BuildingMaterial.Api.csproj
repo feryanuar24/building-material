@@ -5,6 +5,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
   </PropertyGroup>
   <ItemGroup>
+    <PackageReference Include="Serilog.AspNetCore" Version="8.0.3" />
     <ProjectReference Include="../BuildingMaterial.Application/BuildingMaterial.Application.csproj" />
     <ProjectReference Include="../BuildingMaterial.Infrastructure/BuildingMaterial.Infrastructure.csproj" />
     <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="8.0.10" />

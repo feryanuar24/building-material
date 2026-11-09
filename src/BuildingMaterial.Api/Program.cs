@@ -7,190 +7,215 @@ using Microsoft.Extensions.Diagnostics.HealthChecks;
 using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi.Models;
 using BuildingMaterial.Infrastructure;
+using Serilog;
 
-// Inisialisasi Aplikasi
-var builder = WebApplication.CreateBuilder(args);
-var configuration = builder.Configuration;
+// Bootstrap logger agar error saat startup tetap tercatat
+Log.Logger = new LoggerConfiguration()
+    .WriteTo.Console()
+    .CreateBootstrapLogger();
 
-// Registrasi Logger ke File
-builder.Logging.AddProvider(new FileLoggerProvider(
-    Path.Combine(builder.Environment.ContentRootPath, "logs", "app.log")));
-
-// Registrasi EFC menggunakan PostgreSQL serta mengatur migrasi
-builder.Services.AddDbContext<AppDbContext>(options =>
-    options.UseNpgsql(configuration.GetConnectionString("Postgres"),
-        npgsql => npgsql.MigrationsAssembly(typeof(AppDbContext).Assembly.FullName)));
-
-// Registrasi Error Handling
-builder.Services.AddExceptionHandler<ApiExceptionHandler>();
-builder.Services.AddProblemDetails();
-
-// Registrasi Service Custom (JWT Token Service, Email Sender, Database Seeder)
-builder.Services.AddScoped<ITokenService, JwtTokenService>();
-builder.Services.AddScoped<IEmailSender, SmtpEmailSender>();
-builder.Services.AddScoped<DatabaseSeeder>();
-
-// Registrasi HTTP Client
-builder.Services.AddHttpClient();
-
-// Registrasi HTTP Client untuk Elasticsearch
-builder.Services.AddHttpClient("elasticsearch", client =>
+try
 {
-    client.BaseAddress = new Uri(configuration["Elasticsearch:Url"] ?? "http://elasticsearch:9200/");
-    client.Timeout = TimeSpan.FromSeconds(configuration.GetValue("Elasticsearch:TimeoutSeconds", 3));
-});
+    // Inisialisasi Aplikasi
+    var builder = WebApplication.CreateBuilder(args);
+    var configuration = builder.Configuration;
 
-// Registrasi Redis
-builder.Services.AddStackExchangeRedisCache(options => options.Configuration = configuration.GetConnectionString("Redis") ?? "redis:6379");
+    // Registrasi Serilog (konfigurasi dibaca dari appsettings)
+    builder.Host.UseSerilog((context, services, loggerConfiguration) => loggerConfiguration
+        .ReadFrom.Configuration(context.Configuration)
+        .ReadFrom.Services(services)
+        .Enrich.FromLogContext()
+        .Enrich.WithProperty("Application", "BuildingMaterial.Api")
+        .Enrich.WithProperty("Environment", context.HostingEnvironment.EnvironmentName));
 
-// Registrasi Service Custom (CategoryCache & ElasticsearchCatalog)
-builder.Services.AddScoped<CategoryCache>();
-builder.Services.AddSingleton<ElasticsearchCatalog>();
+    // Registrasi EFC menggunakan PostgreSQL serta mengatur migrasi
+    builder.Services.AddDbContext<AppDbContext>(options =>
+        options.UseNpgsql(configuration.GetConnectionString("Postgres"),
+            npgsql => npgsql.MigrationsAssembly(typeof(AppDbContext).Assembly.FullName)));
 
-// Registrasi Background Service untuk Sinkronisasi Catalog ke Elasticsearch
-builder.Services.AddHostedService<CatalogSyncWorker>();
+    // Registrasi Error Handling
+    builder.Services.AddExceptionHandler<ApiExceptionHandler>();
+    builder.Services.AddProblemDetails();
 
-// Registrasi HTTP Client untuk Slack Error Notifier
-builder.Services.AddHttpClient<SlackErrorNotifier>();
+    // Registrasi Service Custom (JWT Token Service, Email Sender, Database Seeder)
+    builder.Services.AddScoped<ITokenService, JwtTokenService>();
+    builder.Services.AddScoped<IEmailSender, SmtpEmailSender>();
+    builder.Services.AddScoped<DatabaseSeeder>();
 
-// Registrasi reCAPTCHA Validator
-builder.Services.AddSingleton<RecaptchaValidator>();
+    // Registrasi HTTP Client
+    builder.Services.AddHttpClient();
 
-// Registrasi Authentication dengan JWT Bearer dan Authorization
-builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme).AddJwtBearer(options =>
-{
-    options.TokenValidationParameters = new TokenValidationParameters
+    // Registrasi HTTP Client untuk Elasticsearch
+    builder.Services.AddHttpClient("elasticsearch", client =>
     {
-        ValidateIssuer = true,
-        ValidateAudience = true,
-        ValidateLifetime = true,
-        ValidateIssuerSigningKey = true,
-        ValidIssuer = configuration["Jwt:Issuer"],
-        ValidAudience = configuration["Jwt:Audience"],
-        IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(configuration["Jwt:Key"] ?? throw new InvalidOperationException("Jwt:Key is not configured.")))
-    };
-    options.Events = new JwtBearerEvents
-    {
-        OnMessageReceived = context =>
-        {
-            if (string.IsNullOrWhiteSpace(context.Token) && context.Request.Cookies.TryGetValue("access_token", out var cookie))
-                context.Token = cookie;
-            return Task.CompletedTask;
-        }
-    };
-});
-builder.Services.AddAuthorization();
-
-// Registrasi Rate Limiter
-builder.Services.AddRateLimiter(options =>
-{
-    options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
-    options.AddFixedWindowLimiter("auth", limiter =>
-    {
-        limiter.PermitLimit = configuration.GetValue("RateLimiting:AuthPermitLimit", 10);
-        limiter.Window = TimeSpan.FromMinutes(configuration.GetValue("RateLimiting:AuthWindowMinutes", 1));
-        limiter.QueueLimit = 0;
-    });
-});
-
-// Registrasi CORS untuk integrasi Frontend & Postman
-builder.Services.AddCors(options =>
-{
-    options.AddPolicy("DefaultCorsPolicy", policy =>
-    {
-        var allowedOrigins = configuration.GetSection("Cors:AllowedOrigins").Get<string[]>() ?? [];
-        if (allowedOrigins.Length > 0)
-        {
-            policy.WithOrigins(allowedOrigins)
-                .AllowAnyHeader()
-                .AllowAnyMethod()
-                .AllowCredentials();
-        }
-        else
-        {
-            policy.SetIsOriginAllowed(_ => true)
-                .AllowAnyHeader()
-                .AllowAnyMethod()
-                .AllowCredentials();
-        }
-    });
-});
-
-// Registrasi Endpoint, Swagger, & Health Checks
-builder.Services.AddControllers();
-builder.Services.AddEndpointsApiExplorer();
-builder.Services.AddSwaggerGen(options =>
-{
-    options.SwaggerDoc("v1", new OpenApiInfo
-    {
-        Title = "Building Material API",
-        Version = "v1",
-        Description = "API Katalog Bahan Bangunan, Autentikasi, dan Admin Management"
+        client.BaseAddress = new Uri(configuration["Elasticsearch:Url"] ?? "http://elasticsearch:9200/");
+        client.Timeout = TimeSpan.FromSeconds(configuration.GetValue("Elasticsearch:TimeoutSeconds", 3));
     });
 
-    options.AddSecurityDefinition("Bearer", new OpenApiSecurityScheme
-    {
-        Name = "Authorization",
-        Description = "Masukkan JWT token Anda. Contoh format: eyJhbGciOi...",
-        In = ParameterLocation.Header,
-        Type = SecuritySchemeType.Http,
-        Scheme = "Bearer",
-        BearerFormat = "JWT"
-    });
+    // Registrasi Redis
+    builder.Services.AddStackExchangeRedisCache(options => options.Configuration = configuration.GetConnectionString("Redis") ?? "redis:6379");
 
-    options.AddSecurityRequirement(new OpenApiSecurityRequirement
+    // Registrasi Service Custom (CategoryCache & ElasticsearchCatalog)
+    builder.Services.AddScoped<CategoryCache>();
+    builder.Services.AddSingleton<ElasticsearchCatalog>();
+
+    // Registrasi Background Service untuk Sinkronisasi Catalog ke Elasticsearch
+    builder.Services.AddHostedService<CatalogSyncWorker>();
+
+    // Registrasi HTTP Client untuk Slack Error Notifier
+    builder.Services.AddHttpClient<SlackErrorNotifier>();
+
+    // Registrasi reCAPTCHA Validator
+    builder.Services.AddSingleton<RecaptchaValidator>();
+
+    // Registrasi Authentication dengan JWT Bearer dan Authorization
+    builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme).AddJwtBearer(options =>
     {
+        options.TokenValidationParameters = new TokenValidationParameters
         {
-            new OpenApiSecurityScheme
+            ValidateIssuer = true,
+            ValidateAudience = true,
+            ValidateLifetime = true,
+            ValidateIssuerSigningKey = true,
+            ValidIssuer = configuration["Jwt:Issuer"],
+            ValidAudience = configuration["Jwt:Audience"],
+            IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(configuration["Jwt:Key"] ?? throw new InvalidOperationException("Jwt:Key is not configured.")))
+        };
+        options.Events = new JwtBearerEvents
+        {
+            OnMessageReceived = context =>
             {
-                Reference = new OpenApiReference
-                {
-                    Type = ReferenceType.SecurityScheme,
-                    Id = "Bearer"
-                }
-            },
-            Array.Empty<string>()
-        }
+                if (string.IsNullOrWhiteSpace(context.Token) && context.Request.Cookies.TryGetValue("access_token", out var cookie))
+                    context.Token = cookie;
+                return Task.CompletedTask;
+            }
+        };
     });
-});
-builder.Services.AddHealthChecks().AddNpgSql(configuration.GetConnectionString("Postgres")!);
+    builder.Services.AddAuthorization();
 
-// Build Aplikasi
-var app = builder.Build();
-
-// Menerapkan Migrasi Database dan Seed Data
-await using (var scope = app.Services.CreateAsyncScope())
-{
-    var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-    await db.Database.MigrateAsync();
-    await scope.ServiceProvider.GetRequiredService<DatabaseSeeder>().SeedAsync();
-}
-
-// Jalankan Middleware dan Endpoint
-app.UseExceptionHandler();
-if (app.Environment.IsDevelopment())
-{
-    app.UseSwagger();
-    app.UseSwaggerUI(options =>
+    // Registrasi Rate Limiter
+    builder.Services.AddRateLimiter(options =>
     {
-        options.SwaggerEndpoint("/swagger/v1/swagger.json", "Building Material API v1");
-        options.DisplayRequestDuration();
+        options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
+        options.AddFixedWindowLimiter("auth", limiter =>
+        {
+            limiter.PermitLimit = configuration.GetValue("RateLimiting:AuthPermitLimit", 10);
+            limiter.Window = TimeSpan.FromMinutes(configuration.GetValue("RateLimiting:AuthWindowMinutes", 1));
+            limiter.QueueLimit = 0;
+        });
     });
+
+    // Registrasi CORS untuk integrasi Frontend & Postman
+    builder.Services.AddCors(options =>
+    {
+        options.AddPolicy("DefaultCorsPolicy", policy =>
+        {
+            var allowedOrigins = configuration.GetSection("Cors:AllowedOrigins").Get<string[]>() ?? [];
+            if (allowedOrigins.Length > 0)
+            {
+                policy.WithOrigins(allowedOrigins)
+                    .AllowAnyHeader()
+                    .AllowAnyMethod()
+                    .AllowCredentials();
+            }
+            else
+            {
+                policy.SetIsOriginAllowed(_ => true)
+                    .AllowAnyHeader()
+                    .AllowAnyMethod()
+                    .AllowCredentials();
+            }
+        });
+    });
+
+    // Registrasi Endpoint, Swagger, & Health Checks
+    builder.Services.AddControllers();
+    builder.Services.AddEndpointsApiExplorer();
+    builder.Services.AddSwaggerGen(options =>
+    {
+        options.SwaggerDoc("v1", new OpenApiInfo
+        {
+            Title = "Building Material API",
+            Version = "v1",
+            Description = "API Katalog Bahan Bangunan, Autentikasi, dan Admin Management"
+        });
+
+        options.AddSecurityDefinition("Bearer", new OpenApiSecurityScheme
+        {
+            Name = "Authorization",
+            Description = "Masukkan JWT token Anda. Contoh format: eyJhbGciOi...",
+            In = ParameterLocation.Header,
+            Type = SecuritySchemeType.Http,
+            Scheme = "Bearer",
+            BearerFormat = "JWT"
+        });
+
+        options.AddSecurityRequirement(new OpenApiSecurityRequirement
+        {
+            {
+                new OpenApiSecurityScheme
+                {
+                    Reference = new OpenApiReference
+                    {
+                        Type = ReferenceType.SecurityScheme,
+                        Id = "Bearer"
+                    }
+                },
+                Array.Empty<string>()
+            }
+        });
+    });
+    builder.Services.AddHealthChecks().AddNpgSql(configuration.GetConnectionString("Postgres")!);
+
+    // Build Aplikasi
+    var app = builder.Build();
+
+    // Menerapkan Migrasi Database dan Seed Data
+    await using (var scope = app.Services.CreateAsyncScope())
+    {
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        await db.Database.MigrateAsync();
+        await scope.ServiceProvider.GetRequiredService<DatabaseSeeder>().SeedAsync();
+    }
+
+    // Jalankan Middleware dan Endpoint
+    app.UseExceptionHandler();
+    app.UseSerilogRequestLogging();
+    if (app.Environment.IsDevelopment())
+    {
+        app.UseSwagger();
+        app.UseSwaggerUI(options =>
+        {
+            options.SwaggerEndpoint("/swagger/v1/swagger.json", "Building Material API v1");
+            options.DisplayRequestDuration();
+        });
+    }
+    app.UseHttpsRedirection();
+    app.UseCors("DefaultCorsPolicy");
+    app.UseRateLimiter();
+    app.UseAuthentication();
+    app.UseAuthorization();
+    app.MapGet("/health", async (HealthCheckService healthService) =>
+    {
+        var report = await healthService.CheckHealthAsync();
+        return report.Status == HealthStatus.Healthy
+            ? Results.Text("Healthy")
+            : Results.Text(report.Status.ToString(), statusCode: StatusCodes.Status503ServiceUnavailable);
+    })
+    .WithTags("Health")
+    .Produces(StatusCodes.Status200OK, contentType: "text/plain")
+    .Produces(StatusCodes.Status503ServiceUnavailable, contentType: "text/plain");
+    app.MapControllers();
+    await app.RunAsync();
 }
-app.UseHttpsRedirection();
-app.UseCors("DefaultCorsPolicy");
-app.UseRateLimiter();
-app.UseAuthentication();
-app.UseAuthorization();
-app.MapGet("/health", async (HealthCheckService healthService) =>
+catch (Exception ex) when (ex is not HostAbortedException)
 {
-    var report = await healthService.CheckHealthAsync();
-    return report.Status == HealthStatus.Healthy
-        ? Results.Text("Healthy")
-        : Results.Text(report.Status.ToString(), statusCode: StatusCodes.Status503ServiceUnavailable);
-})
-.WithTags("Health")
-.Produces(StatusCodes.Status200OK, contentType: "text/plain")
-.Produces(StatusCodes.Status503ServiceUnavailable, contentType: "text/plain");
-app.MapControllers();
-app.Run();
+    Log.Fatal(ex, "Aplikasi berhenti karena kesalahan fatal saat startup");
+    return 1;
+}
+finally
+{
+    await Log.CloseAndFlushAsync();
+}
+
+return 0;
