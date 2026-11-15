@@ -9,7 +9,7 @@ using Microsoft.OpenApi.Models;
 using BuildingMaterial.Infrastructure;
 using Serilog;
 
-// Bootstrap logger agar error saat startup tetap tercatat
+// Bootstrap logger
 Log.Logger = new LoggerConfiguration()
     .WriteTo.Console()
     .CreateBootstrapLogger();
@@ -20,7 +20,7 @@ try
     var builder = WebApplication.CreateBuilder(args);
     var configuration = builder.Configuration;
 
-    // Registrasi Serilog (konfigurasi dibaca dari appsettings)
+    // Registrasi Serilog
     builder.Host.UseSerilog((context, services, loggerConfiguration) => loggerConfiguration
         .ReadFrom.Configuration(context.Configuration)
         .ReadFrom.Services(services)
@@ -28,7 +28,7 @@ try
         .Enrich.WithProperty("Application", "BuildingMaterial.Api")
         .Enrich.WithProperty("Environment", context.HostingEnvironment.EnvironmentName));
 
-    // Registrasi EFC menggunakan PostgreSQL serta mengatur migrasi
+    // Registrasi EFC
     builder.Services.AddDbContext<AppDbContext>(options =>
         options.UseNpgsql(configuration.GetConnectionString("Postgres"),
             npgsql => npgsql.MigrationsAssembly(typeof(AppDbContext).Assembly.FullName)));
@@ -37,7 +37,7 @@ try
     builder.Services.AddExceptionHandler<ApiExceptionHandler>();
     builder.Services.AddProblemDetails();
 
-    // Registrasi Service Custom (JWT Token Service, Email Sender, Database Seeder)
+    // Registrasi Service Custom
     builder.Services.AddScoped<ITokenService, JwtTokenService>();
     builder.Services.AddScoped<IEmailSender, SmtpEmailSender>();
     builder.Services.AddScoped<DatabaseSeeder>();
@@ -45,7 +45,7 @@ try
     // Registrasi HTTP Client
     builder.Services.AddHttpClient();
 
-    // Registrasi HTTP Client untuk Elasticsearch
+    // Registrasi Elasticsearch
     builder.Services.AddHttpClient("elasticsearch", client =>
     {
         client.BaseAddress = new Uri(configuration["Elasticsearch:Url"] ?? "http://elasticsearch:9200/");
@@ -55,20 +55,20 @@ try
     // Registrasi Redis
     builder.Services.AddStackExchangeRedisCache(options => options.Configuration = configuration.GetConnectionString("Redis") ?? "redis:6379");
 
-    // Registrasi Service Custom (CategoryCache & ElasticsearchCatalog)
+    // Registrasi Service Custom
     builder.Services.AddScoped<CategoryCache>();
     builder.Services.AddSingleton<ElasticsearchCatalog>();
 
-    // Registrasi Background Service untuk Sinkronisasi Catalog ke Elasticsearch
+    // Registrasi Background Service Sinkronisasi Catalog ke Elasticsearch
     builder.Services.AddHostedService<CatalogSyncWorker>();
 
-    // Registrasi HTTP Client untuk Slack Error Notifier
+    // Registrasi Slack Error Notifier
     builder.Services.AddHttpClient<SlackErrorNotifier>();
 
-    // Registrasi reCAPTCHA Validator
+    // Registrasi Service Custom
     builder.Services.AddSingleton<RecaptchaValidator>();
 
-    // Registrasi Authentication dengan JWT Bearer dan Authorization
+    // Registrasi Auth dengan JWT Bearer
     builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme).AddJwtBearer(options =>
     {
         options.TokenValidationParameters = new TokenValidationParameters
@@ -83,6 +83,7 @@ try
         };
         options.Events = new JwtBearerEvents
         {
+            // Ambil token dari cookie 'access_token' jika tidak ada di header Authorization
             OnMessageReceived = context =>
             {
                 if (string.IsNullOrWhiteSpace(context.Token) && context.Request.Cookies.TryGetValue("access_token", out var cookie))
@@ -105,7 +106,7 @@ try
         });
     });
 
-    // Registrasi CORS untuk integrasi Frontend & Postman
+    // Registrasi CORS
     builder.Services.AddCors(options =>
     {
         options.AddPolicy("DefaultCorsPolicy", policy =>
@@ -113,6 +114,7 @@ try
             var allowedOrigins = configuration.GetSection("Cors:AllowedOrigins").Get<string[]>() ?? [];
             if (allowedOrigins.Length > 0)
             {
+                // Batasi origin sesuai konfigurasi jika tersedia
                 policy.WithOrigins(allowedOrigins)
                     .AllowAnyHeader()
                     .AllowAnyMethod()
@@ -120,6 +122,7 @@ try
             }
             else
             {
+                // Izinkan semua origin jika belum dikonfigurasi
                 policy.SetIsOriginAllowed(_ => true)
                     .AllowAnyHeader()
                     .AllowAnyMethod()
@@ -128,9 +131,11 @@ try
         });
     });
 
-    // Registrasi Endpoint, Swagger, & Health Checks
+    // Registrasi Controllers
     builder.Services.AddControllers();
     builder.Services.AddEndpointsApiExplorer();
+
+    // Registrasi Swagger/OpenAPI
     builder.Services.AddSwaggerGen(options =>
     {
         options.SwaggerDoc("v1", new OpenApiInfo
@@ -165,12 +170,13 @@ try
             }
         });
     });
+
+    // Registrasi Health Checks
     builder.Services.AddHealthChecks().AddNpgSql(configuration.GetConnectionString("Postgres")!);
 
-    // Build Aplikasi
     var app = builder.Build();
 
-    // Menerapkan Migrasi Database dan Seed Data
+    // Jalankan DB Migration dan Seed data awal saat startup
     await using (var scope = app.Services.CreateAsyncScope())
     {
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
@@ -178,9 +184,13 @@ try
         await scope.ServiceProvider.GetRequiredService<DatabaseSeeder>().SeedAsync();
     }
 
-    // Jalankan Middleware dan Endpoint
+    // Jalankan Error Handling
     app.UseExceptionHandler();
+
+    // Jalankan Logging
     app.UseSerilogRequestLogging();
+
+    // Jalankan Swagger UI
     if (app.Environment.IsDevelopment())
     {
         app.UseSwagger();
@@ -190,11 +200,21 @@ try
             options.DisplayRequestDuration();
         });
     }
+
+    // Jalankan HTTPS Redirection
     app.UseHttpsRedirection();
+
+    // Jalankan CORS
     app.UseCors("DefaultCorsPolicy");
+
+    // Jalankan Rate Limiter
     app.UseRateLimiter();
+
+    // Jalankan Auth
     app.UseAuthentication();
     app.UseAuthorization();
+
+    // Jalankan Rute Health
     app.MapGet("/health", async (HealthCheckService healthService) =>
     {
         var report = await healthService.CheckHealthAsync();
@@ -205,16 +225,22 @@ try
     .WithTags("Health")
     .Produces(StatusCodes.Status200OK, contentType: "text/plain")
     .Produces(StatusCodes.Status503ServiceUnavailable, contentType: "text/plain");
+
+    // Jalankan Rute Controllers
     app.MapControllers();
+
+    // Jalankan Aplikasi
     await app.RunAsync();
 }
 catch (Exception ex) when (ex is not HostAbortedException)
 {
-    Log.Fatal(ex, "Aplikasi berhenti karena kesalahan fatal saat startup");
+    // Abaikan HostAbortedException (biasanya dari EF Core CLI tools) dan log error fatal lainnya
+    Log.Fatal(ex, "Application terminated unexpectedly.");
     return 1;
 }
 finally
 {
+    // Pastikan semua log tertulis sebelum aplikasi berhenti
     await Log.CloseAndFlushAsync();
 }
 

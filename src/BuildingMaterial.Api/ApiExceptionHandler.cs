@@ -13,10 +13,12 @@ internal sealed class ApiExceptionHandler(
         Exception exception,
         CancellationToken cancellationToken)
     {
+        // Catat detail error ke logger dan kirim notifikasi ke Slack
         logger.LogError(exception, "Unhandled exception processing {Method} {Path}.",
             httpContext.Request.Method, httpContext.Request.Path);
         await slackErrorNotifier.NotifyAsync(exception, httpContext.Request.Path, cancellationToken);
 
+        // Kembalikan respons HTTP 500 dengan format ProblemDetails
         httpContext.Response.StatusCode = StatusCodes.Status500InternalServerError;
         await httpContext.Response.WriteAsJsonAsync(new ProblemDetails
         {
@@ -26,6 +28,7 @@ internal sealed class ApiExceptionHandler(
             Instance = httpContext.Request.Path
         }, cancellationToken);
 
+        // Kembalikan true untuk menandakan exception sudah ditangani
         return true;
     }
 }
